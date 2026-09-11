@@ -1,0 +1,80 @@
+"""GCP adapter. Implement upload/download/push_image for Lab 1.
+
+SDK:  pip install google-cloud-storage google-cloud-aiplatform
+Docs: storage.Client for GCS; Artifact Registry push goes through `docker push` after
+      `gcloud auth configure-docker <region>-docker.pkg.dev`.
+
+Hints for Lab 1:
+  * BLOB_URI looks like gs://bucket/prefix — parse it here, never in src/.
+  * Artifact Registry paths are region-scoped:
+        <region>-docker.pkg.dev/<project>/<repo>/<image>
+    A common first failure is pushing to gcr.io out of habit; it is a different service.
+  * push_image must return the digest reference, not the tag.
+  * GCP calls them labels, not tags, and they must be lowercase with no spaces.
+    cfg.tags(1) already satisfies that constraint — do not "improve" the values.
+"""
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+from google.cloud import storage
+
+from cloudlayer.base import CloudAdapter
+
+
+class GcpAdapter(CloudAdapter):
+    def upload(self, local_path: str, key: str) -> str:
+        blob_uri = self.cfg.blob_uri
+        bucket_name, prefix = blob_uri.removeprefix("gs://").split("/", 1)
+
+        client = storage.Client(project=self.cfg.project_id)
+        bucket = client.bucket(bucket_name)
+
+        object_name = f"{prefix.rstrip('/')}/{key.lstrip('/')}"
+        blob = bucket.blob(object_name)
+        blob.upload_from_filename(local_path)
+
+        return f"gs://{bucket_name}/{object_name}"
+
+    def download(self, uri: str, local_path: str) -> None:
+        bucket_name, object_name = uri.removeprefix("gs://").split("/", 1)
+
+        client = storage.Client(project=self.cfg.project_id)
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(object_name)
+
+        Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+        blob.download_to_filename(local_path)
+
+    def push_image(self, local_tag: str) -> str:
+        registry = self.cfg.container_registry.rstrip("/")
+        image_name = local_tag.split(":")[0]
+        image_tag = local_tag.rsplit(":", 1)[1]
+
+        remote_tag = f"{registry}/{image_name}:{image_tag}"
+
+        subprocess.run(
+            ["docker", "tag", local_tag, remote_tag],
+            check=True,
+        )
+
+        subprocess.run(
+            ["docker", "push", remote_tag],
+            check=True,
+        )
+
+        result = subprocess.run(
+            ["docker", "inspect", "--format={{index .RepoDigests 0}}", remote_tag],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        return result.stdout.strip()
+
+    # submit_training / register_model  -> Lab 2 (Vertex custom training + Model Registry)
+    # deploy / invoke                   -> Lab 3 (Vertex Endpoint)
+    # emit_metric                       -> Lab 4 (Cloud Monitoring time series)
+    # generate                          -> Lab 5 (managed LLM endpoint; read usageMetadata for tokens)
+    # teardown                          -> Lab 5 (filter resources by label)
