@@ -32,6 +32,15 @@ def git_commit() -> str:
     except Exception:
         return "unknown"
 
+def dvc_hash() -> str:
+    dvc_file = config.REPO_ROOT / "data/raw/sensors.csv.dvc"
+    try:
+        for line in dvc_file.read_text().splitlines():
+            if line.strip().startswith("- md5:"):
+                return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return "unknown"
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="ITCS355 Lab 1 — reproducible training")
@@ -83,6 +92,7 @@ def main() -> None:
         mlflow.set_tags({
             "git_commit": git_commit(),
             "data_fingerprint": fingerprint,
+            "dvc_hash": dvc_hash(),
             "split_strategy": "group_by_machine_id",
             "n_train_rows": len(train_df),
             "n_val_rows": len(val_df),
